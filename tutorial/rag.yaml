@@ -1,0 +1,96 @@
+version: 0.5  # GraphAIのバージョン番号
+
+nodes:  # ここから各ノード（処理ステップ）の定義が始まります
+  source:  # 最初のノード：検索対象と質問内容を定義
+    value:
+      name: Sam Bankman-Fried  # 検索したい人物の名前
+      topic: sentence by the court  # 特に知りたい話題（裁判所の判決）
+      query: describe the final sentence by the court for Sam Bank-Fried  # 具体的な質問内容
+  
+  wikipedia:  # Wikipediaから情報を取得するノード
+    console:
+      before: ...fetching data from wikkpedia  # 実行時に表示されるメッセージ
+    agent: wikipediaAgent  # 使用するエージェント（Wikipediaから情報を取得する機能）
+    inputs:
+      query: :source.name  # sourceノードで定義した名前（Sam Bankman-Fried）を検索
+    params:
+      lang: en  # 英語のWikipediaを使用
+  
+  chunks:  # 取得した記事を小さな部分（チャンク）に分割するノード
+    console:
+      before: ...splitting the article into chunks  # 実行時に表示されるメッセージ
+    agent: stringSplitterAgent  # テキスト分割用のエージェント
+    inputs:
+      text: :wikipedia.content  # wikipediaノードで取得した記事内容を入力
+  
+  chunkEmbeddings:  # 分割したチャンクをベクトル化（数値表現に変換）するノード
+    console:
+      before: ...fetching embeddings for chunks  # 実行時に表示されるメッセージ
+    agent: stringEmbeddingsAgent  # テキストをベクトル化するエージェント
+    inputs:
+      array: :chunks.contents  # 分割されたチャンク一覧を入力
+  
+  topicEmbedding:  # 検索トピック「sentence by the court」をベクトル化するノード
+    console:
+      before: ...fetching embedding for the topic  # 実行時に表示されるメッセージ
+    agent: stringEmbeddingsAgent  # テキストをベクトル化するエージェント
+    inputs:
+      item: :source.topic  # sourceノードで定義したトピックを入力
+  
+  similarities:  # 各チャンクと検索トピックの類似度を計算するノード
+    agent: dotProductAgent  # ベクトル間の類似度を計算するエージェント
+    inputs:
+      matrix: :chunkEmbeddings  # チャンクのベクトル一覧
+      vector: :topicEmbedding.$0  # トピックのベクトル（最初の要素を使用）
+  
+  sortedChunks:  # チャンクを類似度順にソートするノード
+    agent: sortByValuesAgent  # 値に基づいてソートするエージェント
+    inputs:
+      array: :chunks.contents  # ソートするチャンク一覧
+      values: :similarities  # ソートの基準となる類似度
+  
+  referenceText:  # ソートされたチャンクから必要な情報だけを抽出するノード
+    agent: tokenBoundStringsAgent  # トークン数制限内でテキストを抽出するエージェント
+    inputs:
+      chunks: :sortedChunks  # ソート済みのチャンク
+    params:
+      limit: 5000  # 最大5000トークンまで使用
+  
+  prompt:  # 抽出した情報と質問を組み合わせてプロンプトを作成するノード
+    agent: stringTemplateAgent  # テンプレートを使って文字列を生成するエージェント
+    inputs:
+      prompt: :source.query  # 元の質問
+      text: :referenceText.content  # 抽出した関連情報
+    params:
+      template: |-  # プロンプトのテンプレート
+        Using the following document, ${text}  # 「以下の文書を使って」
+
+        ${prompt}  # 元の質問
+  
+  RagQuery:  # 作成したプロンプトを使ってAIに質問するノード（RAG方式）
+    console:
+      before: ...performing the RAG query  # 実行時に表示されるメッセージ
+    agent: openAIAgent  # OpenAIのモデルを使用するエージェント
+    inputs:
+      prompt: :prompt  # 作成したプロンプト
+    params:
+      model: gpt-4o  # 使用するモデル（GPT-4o）
+  
+  OneShotQuery:  # 元の質問だけでAIに直接質問するノード（比較用）
+    agent: openAIAgent  # OpenAIのモデルを使用するエージェント
+    inputs:
+      prompt: :source.query  # 元の質問をそのまま使用
+    params:
+      model: gpt-4o  # 使用するモデル（GPT-4o）
+  
+  RagResult:  # RAG方式の結果を出力するノード
+    agent: copyAgent  # 結果をコピーするエージェント
+    inputs:
+      result: :RagQuery.text  # RAG方式での回答テキスト
+    isResult: true  # これは最終結果の一つであることを示す
+  
+  OneShotResult:  # 直接質問の結果を出力するノード
+    agent: copyAgent  # 結果をコピーするエージェント
+    inputs:
+      result: :OneShotQuery.text  # 直接質問での回答テキスト
+    isResult: true  # これは最終結果の一つであることを示す

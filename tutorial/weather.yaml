@@ -1,0 +1,163 @@
+version: 0.5
+loop:
+  while: :continue  # continueが「真」である間、ループを継続する
+nodes:
+  continue:
+    value: true  # 最初はtrueでループを開始
+    update: :checkInput.result  # ユーザーが/byeと入力したかどうかの結果で更新される
+  
+  messages:
+    value:  # 初期メッセージ（AIに気象学者の役割を与える）
+      - role: system
+        content: You are a meteorologist. Use getWeather API, only when the user ask for
+          the weather information.
+    update: :reducer.array.$0  # 会話履歴を更新する
+    isResult: true  # 最終的な結果として、このノードの値を返す
+  
+  userInput:
+    agent: textInputAgent  # ユーザーからの入力を受け付けるエージェント
+    params:
+      message: "Location:"  # ユーザーに表示するメッセージ
+  
+  checkInput:
+    agent: compareAgent  # 入力を比較するエージェント
+    inputs:
+      array:
+        - :userInput.text  # ユーザーの入力テキスト
+        - "!="  # 「等しくない」という比較演算子
+        - /bye  # 比較対象の文字列（/byeと等しくなければtrue）
+  
+  llmCall:
+    agent: openAIAgent  # OpenAIのLLMを呼び出すエージェント
+    params:
+      tools:  # AIが使用できるツール（関数）の定義
+        - type: function
+          function:
+            name: getWeather  # 天気情報を取得する関数名
+            description: get weather information of the specified location  # 関数の説明
+            parameters:  # 関数のパラメータ
+              type: object
+              properties:
+                latitude:
+                  type: number
+                  description: The latitude of the location.  # 緯度の説明
+                longitude:
+                  type: number
+                  description: The longitude of the location.  # 経度の説明
+              required:  # 必須パラメータ
+                - latitude
+                - longitude
+      model: gpt-4o  # 使用するAIモデル
+    inputs:
+      messages: :messages  # 会話履歴
+      prompt: :userInput.text  # ユーザーの入力をプロンプトとして使用
+    if: :checkInput  # checkInputがtrueの場合のみ実行（/byeが入力されていない場合）
+  
+  output:
+    agent: stringTemplateAgent  # 文字列テンプレートを処理するエージェント
+    inputs:
+      text: "Weather: ${:llmCall.text}"  # AIの応答の前に「Weather: 」をつける
+    console:
+      after: true  # 実行後にコンソールに出力
+    if: :llmCall.text  # llmCallからテキストが返された場合のみ実行
+  
+  messagesWithFirstRes:
+    agent: pushAgent  # 配列に要素を追加するエージェント
+    inputs:
+      array: :messages  # 既存の会話履歴
+      items:  # 追加する項目
+        - :userInput.message  # ユーザーの入力
+        - :llmCall.message  # AIの最初の応答
+  
+  tool_calls:
+    agent: nestedAgent  # ネストされたグラフを実行するエージェント
+    inputs:
+      parent_messages: :messagesWithFirstRes.array  # 親グラフからのメッセージ
+      parent_tool: :llmCall.tool  # 親グラフからのツール情報
+    if: :llmCall.tool  # AIがツール（getWeather関数）を呼び出そうとした場合のみ実行
+    graph:
+      nodes:  # ネストされたグラフのノード定義
+        outputFetching:
+          agent: stringTemplateAgent  # 情報取得中であることを表示
+          inputs:
+            text: "... fetching weather info: ${:parent_tool.arguments.latitude},
+              ${:parent_tool.arguments.longitude}"  # 緯度・経度を表示
+          console:
+            after: true  # 実行後にコンソールに出力
+        
+        fetchPoints:
+          agent: fetchAgent  # APIからデータを取得するエージェント
+          inputs:
+            url: https://api.weather.gov/points/${:parent_tool.arguments.latitude},${:parent_tool.arguments.longitude}  # 緯度・経度から地点情報を取得するAPI
+            headers:
+              User-Agent: (receptron.org)  # API呼び出し時のUser-Agent
+        
+        fetchForecast:
+          agent: fetchAgent  # APIからデータを取得するエージェント
+          params:
+            type: text  # テキスト形式で取得
+          inputs:
+            url: :fetchPoints.properties.forecast  # 最初のAPIレスポンスから取得した予報URLを使用
+            headers:
+              User-Agent: (receptron.org)  # API呼び出し時のUser-Agent
+          unless: :fetchPoints.onError  # fetchPointsでエラーが発生しなかった場合のみ実行
+        
+        extractError:
+          agent: stringTemplateAgent  # エラーメッセージを生成するエージェント
+          inputs:
+            text: "${:fetchPoints.onError.error.title}:
+              ${:fetchPoints.onError.error.detail}"  # エラータイトルと詳細を表示
+          if: :fetchPoints.onError  # fetchPointsでエラーが発生した場合のみ実行
+        
+        responseText:
+          agent: copyAgent  # 値をコピーするエージェント
+          anyInput: true  # 複数の入力から最初に利用可能なものを使用
+          inputs:
+            array:  # 取得データかエラーメッセージのいずれかを選択
+              - :fetchForecast  # 天気予報データ
+              - :extractError  # エラーメッセージ
+        
+        messagesWithToolRes:
+          agent: pushAgent  # 配列に要素を追加するエージェント
+          inputs:
+            array: :parent_messages  # 親グラフからのメッセージ
+            item:  # ツールの実行結果をメッセージに追加
+              role: tool  # ツールの役割
+              tool_call_id: :parent_tool.id  # ツール呼び出しID
+              name: :parent_tool.name  # ツール名
+              content: :responseText.array.$0  # ツールの応答内容
+        
+        llmCall:
+          agent: openAIAgent  # 再度AIを呼び出す
+          inputs:
+            messages: :messagesWithToolRes.array  # ツールの結果を含むメッセージ
+          params:
+            model: gpt-4o  # 使用するAIモデル
+        
+        output:
+          agent: stringTemplateAgent  # 文字列テンプレートを処理するエージェント
+          inputs:
+            text: "Weather: ${:llmCall.text}"  # AIの応答の前に「Weather: 」をつける
+          console:
+            after: true  # 実行後にコンソールに出力
+        
+        messagesWithSecondRes:
+          agent: pushAgent  # 配列に要素を追加するエージェント
+          inputs:
+            array: :messagesWithToolRes.array  # 既存のメッセージ
+            item: :llmCall.message  # 2回目のAI応答をメッセージに追加
+          isResult: true  # 最終的な結果として、このノードの値を返す
+  
+  no_tool_calls:
+    agent: copyAgent  # 値をコピーするエージェント
+    unless: :llmCall.tool  # AIがツールを呼び出さなかった場合のみ実行
+    inputs:
+      result: :messagesWithFirstRes.array  # ツールなしの会話履歴をコピー
+  
+  reducer:
+    agent: copyAgent  # 値をコピーするエージェント
+    anyInput: true  # 複数の入力から最初に利用可能なものを使用
+    inputs:
+      array:  # ツール使用の有無に応じて適切なメッセージ履歴を選択
+        - :no_tool_calls.result  # ツールを使わなかった場合の会話履歴
+        - :tool_calls.messagesWithSecondRes.array  # ツールを使った場合の会話履歴

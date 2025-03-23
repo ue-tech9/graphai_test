@@ -1,0 +1,99 @@
+version: 0.5
+nodes:
+  source:
+    value:
+      query: "What is the capital of Japan?"
+      topic: "capital of Japan"
+      wikipediaQuery: "Japan"
+  
+  wikipedia:
+    agent: wikipediaAgent
+    console:
+      before: ...fetching data from Wikipedia
+    inputs:
+      query: :source.wikipediaQuery
+    params:
+      lang: en
+  
+  chunks:
+    agent: stringSplitterAgent
+    console:
+      before: ...splitting the article into chunks
+    inputs:
+      text: :wikipedia.content
+  
+  chunkEmbeddings:
+    agent: stringEmbeddingsAgent
+    console:
+      before: ...getting embeddings for chunks
+    inputs:
+      array: :chunks.contents
+  
+  topicEmbedding:
+    agent: stringEmbeddingsAgent
+    console:
+      before: ...getting embedding for the topic
+    inputs:
+      item: :source.topic
+  
+  similarities:
+    agent: dotProductAgent
+    console:
+      before: ...calculating similarities
+    inputs:
+      matrix: :chunkEmbeddings
+      vector: :topicEmbedding.$0
+  
+  sortedChunks:
+    agent: sortByValuesAgent
+    console:
+      before: ...sorting chunks by similarity
+    inputs:
+      array: :chunks.contents
+      values: :similarities
+  
+  referenceText:
+    agent: tokenBoundStringsAgent
+    console:
+      before: ...creating reference text
+    inputs:
+      chunks: :sortedChunks
+    params:
+      limit: 3000
+  
+  prompt:
+    agent: stringTemplateAgent
+    console:
+      before: ...creating prompt with reference
+    inputs:
+      question: :source.query
+      text: :referenceText.content
+    params:
+      template: |-
+        Using the following reference information:
+        
+        ${text}
+        
+        Please answer this question: ${question}
+  
+  ragResponse:
+    agent: openAIAgent
+    console:
+      before: ...generating RAG response
+      after: true
+    params:
+      model: gpt-4o
+    inputs:
+      prompt: :prompt
+    isResult: true
+  
+  directResponse:
+    agent: openAIAgent
+    console:
+      before: ...generating direct response (without RAG)
+      after: true
+    params:
+      model: gpt-4o
+    inputs:
+      prompt: :source.query
+    isResult: true

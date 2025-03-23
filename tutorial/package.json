@@ -1,0 +1,10 @@
+{
+  "name": "tutorial",
+  "packageManager": "yarn@4.7.0",
+  "dependencies": {
+    "@graphai-dsl/cli": "^0.1.11"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.3"
+  }
+}

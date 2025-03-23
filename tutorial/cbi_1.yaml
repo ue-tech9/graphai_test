@@ -1,0 +1,140 @@
+version: 0.5
+# ====================================
+# CBT (認知行動療法) 日記アプリ
+# ユーザーの日記入力を受け取り、CBTの枠組みで分析し、
+# 否定的な思考パターンを特定して、より健全な代替思考を提案します
+# ====================================
+
+# ループ処理: ユーザーが「/終了」と入力するまで続行
+loop:
+  while: :continue
+
+nodes:
+  # ======== システム設定と状態管理 ========
+  # continue: ループを継続するかどうかのフラグ
+  continue:
+    value: true  # 初期値はtrue（ループ継続）
+    update: :checkExit.result  # ユーザーが/終了を入力したらfalseに更新
+  
+  # messages: 会話履歴を保持するノード
+  messages:
+    value:
+      - role: system
+        content: |
+          # CBTセラピストの役割定義
+          あなたは認知行動療法（CBT）の専門家です。ユーザーの日記エントリーから以下を特定し、サポートします：
+          1. 自動思考（ネガティブな考え方や認知の歪み）
+          2. 認知の歪み（例：全か無か思考、心の読み過ぎ、破局的思考など）
+          3. 感情と身体反応
+          4. より合理的・バランスのとれた代替思考
+          
+          会話は親切で共感的に行い、批判せず、段階的なCBTプロセスを通じてユーザーをガイドしてください。
+    update: :updateMessages.array  # 新しいメッセージが追加されたら更新
+    isResult: true  # このノードの最終値を結果として出力
+  
+  # ======== ユーザーインターフェースと制御 ========
+  # アプリ起動時のウェルカムメッセージを表示
+  welcomeMessage:
+    agent: stringTemplateAgent  # 文字列テンプレートを処理するエージェント
+    console:
+      after: true  # 処理後にコンソールに出力
+    inputs:
+      text: |
+        === CBT日記アプリへようこそ ===
+        日記を入力して、認知行動療法（CBT）のフレームワークで分析します。
+        
+        今日あった出来事と、それに対するあなたの考えや感情を自由に書いてください。
+        終了するには「/終了」と入力してください。
+  
+  # ユーザーからの日記入力を受け取る
+  userInput:
+    agent: textInputAgent  # テキスト入力を処理するエージェント
+    params:
+      message: "日記エントリー："  # 入力プロンプト
+      required: true  # 入力は必須
+  
+  # ユーザーが終了コマンドを入力したかチェック
+  checkExit:
+    agent: compareAgent  # 比較演算を行うエージェント
+    inputs:
+      array:
+        - :userInput.text  # ユーザー入力テキスト
+        - "!="  # 不等比較演算子
+        - /終了  # 終了コマンド
+  
+  # ======== CBT分析処理 ========
+  # LLMを使ってCBT分析を実行
+  cbtAnalysis:
+    agent: openAIAgent  # OpenAI APIを呼び出すエージェント
+    params:
+      model: gpt-4o  # 使用するLLMモデル
+    inputs:
+      messages: :messages  # これまでの会話履歴
+      prompt: |
+        # CBT分析プロンプト
+        以下の日記エントリーをCBTの観点から分析してください：
+        
+        ${:userInput.text}
+        
+        1. 自動思考（ネガティブな考え方）の特定
+        2. 認知の歪みのパターンの特定（全か無か思考、心の読み過ぎなど）
+        3. 感情と身体反応の関連付け
+        4. より合理的でバランスの取れた代替思考の提案
+        5. 前向きな行動のための提案
+        
+        回答は共感的で、批判せず、具体的なCBTテクニックを提案するようにしてください。
+    if: :checkExit.result  # ユーザーが終了コマンドを入力していない場合のみ実行
+  
+  # ======== 結果表示 ========
+  # 分析結果をフォーマットして表示
+  outputAnalysis:
+    agent: stringTemplateAgent  # 文字列テンプレートを処理するエージェント
+    console:
+      after: true  # 処理後にコンソールに出力
+    inputs:
+      text: |
+        ===== CBT分析結果 =====
+        ${:cbtAnalysis.text}
+        =======================
+    if: :cbtAnalysis.text  # 分析結果がある場合のみ表示
+  
+  # ======== 会話履歴管理 ========
+  # ユーザーのメッセージを会話形式に変換
+  userMessage:
+    agent: copyAgent  # 値をコピーするエージェント
+    inputs:
+      message:
+        role: user
+        content: :userInput.text  # ユーザー入力テキスト
+    if: :checkExit.result  # ユーザーが終了コマンドを入力していない場合のみ実行
+  
+  # AIの回答を会話形式に変換
+  assistantMessage:
+    agent: copyAgent  # 値をコピーするエージェント
+    inputs:
+      message:
+        role: assistant
+        content: :cbtAnalysis.text  # CBT分析結果テキスト
+    if: :cbtAnalysis.text  # 分析結果がある場合のみ実行
+  
+  # 会話履歴を更新
+  updateMessages:
+    agent: pushAgent  # 配列に要素を追加するエージェント
+    inputs:
+      array: :messages  # 現在の会話履歴
+      items:  # 追加する項目
+        - :userMessage.message  # ユーザーのメッセージ
+        - :assistantMessage.message  # AIの回答
+    if: :checkExit.result  # ユーザーが終了コマンドを入力していない場合のみ実行
+  
+  # ======== 終了処理 ========
+  # アプリ終了時のメッセージを表示
+  exitMessage:
+    agent: stringTemplateAgent  # 文字列テンプレートを処理するエージェント
+    console:
+      after: true  # 処理後にコンソールに出力
+    inputs:
+      text: |
+        CBT日記アプリを終了します。お疲れ様でした。
+        日々の思考パターンを認識し、より健康的な考え方を身につけていく過程を続けてください。
+    unless: :checkExit.result  # ユーザーが終了コマンドを入力した場合のみ実行

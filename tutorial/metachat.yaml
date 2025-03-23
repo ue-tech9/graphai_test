@@ -1,0 +1,68 @@
+# GraphAI設定ファイル：ユーザー情報収集アプリ
+version: 0.5  # GraphAIのバージョン
+
+# ノードはグラフの構成要素で、それぞれ特定の役割を持つ
+nodes:
+  # ドキュメントノード：GraphAIのドキュメント情報を取得する
+  document:
+    agent: fetchAgent  # 外部情報を取得するエージェント
+    console:
+      before: ...fetching document  # 実行前に表示されるメッセージ
+    params:
+      type: text  # 取得するデータの種類
+    inputs:
+      # GraphAIの使い方が書かれたドキュメントのURL
+      url: https://raw.githubusercontent.com/receptron/graphai/main/packages/graphai/README.md
+
+  # サンプルグラフノード：参考になるサンプルのグラフデータを取得する
+  sampleGraph:
+    agent: fetchAgent
+    console:
+      before: ...fetching sample graph
+    params:
+      type: text
+    inputs:
+      # サンプルグラフのURL（会話の流れの参考になる）
+      url: https://raw.githubusercontent.com/receptron/graphai/refs/heads/main/packages/samples/graph_data/openai/reception.yaml
+
+  # グラフ生成ノード：AIを使って新しい会話グラフを生成する
+  graphGenerator:
+    agent: openAIAgent  # OpenAIのAPIを使用するエージェント
+    console:
+      before: ...generating a new graph
+    params:
+      model: gpt-4o  # 使用するAIモデル
+    inputs:
+      # 何の情報を集めるかを指定
+      prompt: Name, Date of Birth and Gender
+      messages:
+        # システムメッセージ：AIに対する指示
+        - role: system
+          content: >-
+            You an expert in GraphAI programming. You are responsible in
+            generating a graphAI graph to get required information from the
+            user.
+
+            graphAI graph outputs in json format
+
+            [documation of GraphAI]
+            
+            # ドキュメントノードの内容を挿入
+            ${:document}
+        # ユーザーメッセージ：具体的なリクエスト内容
+        - role: user
+          content: Name, Date of Birth and Gendar
+        # アシスタントメッセージ：サンプル回答
+        - role: assistant
+          content: |
+            ```json
+            # サンプルグラフの内容を挿入
+            ${:sampleGraph}
+            ```
+
+  # 実行ノード：生成されたグラフを実際に実行する
+  executer:
+    agent: nestedAgent  # 入れ子構造でグラフを実行するエージェント
+    # グラフジェネレーターの出力からJSONを抽出して実行
+    graph: :graphGenerator.text.codeBlock().jsonParse()
+    isResult: true  # このノードの出力が最終結果

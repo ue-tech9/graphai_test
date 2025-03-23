@@ -1,0 +1,289 @@
+version: 0.5
+# ====================================
+# CBT (認知行動療法) 日記アプリ - 基本機能版
+# 複雑な可視化機能を除いたシンプルな実装
+# ====================================
+
+# ループ処理: ユーザーが「/終了」と入力するまで続行
+loop:
+  while: :continue
+
+nodes:
+  # ======== システム設定と状態管理 ========
+  # continue: ループを継続するかどうかのフラグ
+  continue:
+    value: true  # 初期値はtrue（ループ継続）
+    update: :checkExit.result  # ユーザーが/終了を入力したらfalseに更新
+  
+  # history: 過去の分析結果を保存するノード
+  history:
+    value: []  # 初期値は空配列
+    update: :updateHistory.array  # 新しい分析結果が追加されたら更新
+  
+  # messages: 会話履歴を保持するノード
+  messages:
+    value:
+      - role: system
+        content: |
+          # CBTセラピストの役割定義
+          あなたは認知行動療法（CBT）の専門家です。ユーザーの日記エントリーから以下を特定し、サポートします：
+          1. 自動思考（ネガティブな考え方や認知の歪み）
+          2. 認知の歪み（例：全か無か思考、心の読み過ぎ、破局的思考など）
+          3. 感情と身体反応
+          4. より合理的・バランスのとれた代替思考
+          
+          会話は親切で共感的に行い、批判せず、段階的なCBTプロセスを通じてユーザーをガイドしてください。
+          
+          分析結果は以下の形式で構造化してください：
+          
+          <自動思考>
+          - ネガティブな考え1（強さ: 1-10）
+          - ネガティブな考え2（強さ: 1-10）
+          </自動思考>
+          
+          <認知の歪み>
+          - 歪みの種類1（強さ: 1-10）
+          - 歪みの種類2（強さ: 1-10）
+          </認知の歪み>
+          
+          <感情と身体反応>
+          - 感情1（強さ: 1-10）: 関連する身体反応
+          - 感情2（強さ: 1-10）: 関連する身体反応
+          </感情と身体反応>
+          
+          <代替思考>
+          - より合理的な考え方1
+          - より合理的な考え方2
+          </代替思考>
+          
+          <行動提案>
+          - 具体的な行動提案1
+          - 具体的な行動提案2
+          </行動提案>
+    update: :updateMessages.array  # 新しいメッセージが追加されたら更新
+    isResult: true  # このノードの最終値を結果として出力
+  
+  # ======== ユーザーインターフェースと制御 ========
+  # アプリ起動時のウェルカムメッセージを表示
+  welcomeMessage:
+    agent: stringTemplateAgent
+    console:
+      after: true
+    inputs:
+      text: |
+        === CBT日記アプリへようこそ ===
+        日記を入力して、認知行動療法（CBT）のフレームワークで分析します。
+        
+        今日あった出来事と、それに対するあなたの考えや感情を自由に書いてください。
+        終了するには「/終了」と入力してください。
+        過去の分析結果の傾向を見るには「/統計」と入力してください。
+  
+  # ユーザーからの日記入力を受け取る
+  userInput:
+    agent: textInputAgent
+    params:
+      message: "日記エントリー："
+      required: true
+  
+  # ユーザーが終了コマンドを入力したかチェック
+  checkExit:
+    agent: compareAgent
+    inputs:
+      array:
+        - :userInput.text
+        - "!="
+        - /終了
+  
+  # ユーザーが統計表示コマンドを入力したかチェック
+  checkStats:
+    agent: compareAgent
+    inputs:
+      array:
+        - :userInput.text
+        - "=="
+        - /統計
+  
+  # ======== CBT分析処理 ========
+  # 分析を実行するかどうかの条件分岐
+  shouldAnalyze:
+    agent: compareAgent
+    inputs:
+      array: 
+        - :checkExit.result
+        - "&&"
+        - :negateStats.result
+  
+  # 統計表示のネゲート（論理NOT）
+  negateStats:
+    agent: compareAgent
+    inputs:
+      array:
+        - :checkStats.result
+        - "=="
+        - false
+  
+  # LLMを使ってCBT分析を実行
+  cbtAnalysis:
+    agent: openAIAgent
+    params:
+      model: gpt-4o
+    inputs:
+      messages: :messages
+      prompt: |
+        # CBT分析プロンプト
+        以下の日記エントリーをCBTの観点から分析してください：
+        
+        ${:userInput.text}
+        
+        分析結果は以下の形式で構造化してください。各セクションをXMLタグで囲み、リスト形式で項目を挙げてください：
+        
+        <自動思考>
+        - ネガティブな考え1（強さ: 1-10）
+        - ネガティブな考え2（強さ: 1-10）
+        </自動思考>
+        
+        <認知の歪み>
+        - 歪みの種類1（強さ: 1-10）
+        - 歪みの種類2（強さ: 1-10）
+        </認知の歪み>
+        
+        <感情と身体反応>
+        - 感情1（強さ: 1-10）: 関連する身体反応
+        - 感情2（強さ: 1-10）: 関連する身体反応
+        </感情と身体反応>
+        
+        <代替思考>
+        - より合理的な考え方1
+        - より合理的な考え方2
+        </代替思考>
+        
+        <行動提案>
+        - 具体的な行動提案1
+        - 具体的な行動提案2
+        </行動提案>
+        
+        その後、全体の分析結果について、共感的でサポーティブな言葉でユーザーに語りかけてください。批判せず、具体的なCBTテクニックを提案し、前向きな変化を促してください。
+    if: :shouldAnalyze.result
+  
+  # 履歴を更新
+  updateHistory:
+    agent: pushAgent
+    inputs:
+      array: :history
+      item: :cbtAnalysis.text
+    if: :cbtAnalysis.text
+  
+  # 分析結果を表示
+  outputAnalysis:
+    agent: stringTemplateAgent
+    console:
+      after: true
+    inputs:
+      text: |
+        ===== CBT分析結果 =====
+        ${:cbtAnalysis.text}
+        =======================
+    if: :cbtAnalysis.text
+  
+  # ======== 統計分析表示 ========
+  # 過去の記録からの統計情報を表示
+  statisticsDisplay:
+    agent: openAIAgent
+    params:
+      model: gpt-4o
+    inputs:
+      history: :history
+      prompt: |
+        以下のCBT分析履歴データから統計情報を生成してください。過去の記録を分析し、最も頻繁に出現する認知の歪み、感情、身体反応を特定し、時系列での変化傾向を示してください。
+        
+        分析履歴：
+        ${:history.join("\n\n----------\n\n")}
+        
+        以下のフォーマットで統計情報をまとめてください：
+        
+        <よく見られる認知の歪み>
+        - 歪みの種類1: 出現回数と平均強度
+        - 歪みの種類2: 出現回数と平均強度
+        - 歪みの種類3: 出現回数と平均強度
+        </よく見られる認知の歪み>
+        
+        <よく見られる感情>
+        - 感情1: 出現回数と平均強度
+        - 感情2: 出現回数と平均強度
+        - 感情3: 出現回数と平均強度
+        </よく見られる感情>
+        
+        <傾向分析>
+        時系列での変化の傾向について簡潔に分析してください。ユーザーの認知の歪みや感情の強度が時間とともにどのように変化しているかを述べてください。
+        </傾向分析>
+        
+        <改善提案>
+        データに基づいて、ユーザーに対する具体的な改善提案を2-3つ挙げてください。
+        </改善提案>
+    if: :checkStats.result
+  
+  # 統計表示の結果を出力
+  outputStatistics:
+    agent: stringTemplateAgent
+    console:
+      after: true
+    inputs:
+      text: |
+        ===== CBT分析の統計情報 =====
+        ${:statisticsDisplay.text}
+        ==============================
+        
+        ※このデータは ${:history.length} 回の記録に基づいています。
+    if: :statisticsDisplay.text
+  
+  # 統計表示後のダミー分析結果（会話履歴更新のため）
+  dummyAnalysis:
+    agent: stringTemplateAgent
+    inputs:
+      text: |
+        統計情報を表示しました。引き続き日記を入力してください。
+    if: :checkStats.result
+  
+  # ======== 会話履歴管理 ========
+  # ユーザーのメッセージを会話形式に変換
+  userMessage:
+    agent: copyAgent
+    inputs:
+      message:
+        role: user
+        content: :userInput.text
+    if: :checkExit.result
+  
+  # AIの回答を会話形式に変換（通常分析と統計表示の両方に対応）
+  assistantMessage:
+    agent: copyAgent
+    anyInput: true
+    inputs:
+      message:
+        role: assistant
+        content:
+          - :cbtAnalysis.text
+          - :dummyAnalysis.text
+    if: :checkExit.result
+  
+  # 会話履歴を更新
+  updateMessages:
+    agent: pushAgent
+    inputs:
+      array: :messages
+      items:
+        - :userMessage.message
+        - :assistantMessage.message
+    if: :checkExit.result
+  
+  # ======== 終了処理 ========
+  # アプリ終了時のメッセージを表示
+  exitMessage:
+    agent: stringTemplateAgent
+    console:
+      after: true
+    inputs:
+      text: |
+        CBT日記アプリを終了します。お疲れ様でした。
+        日々の思考パターンを認識し、より健康的な考え方を身につけていく過程を続けてください。
+    unless: :checkExit.result
